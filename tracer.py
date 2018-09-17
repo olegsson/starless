@@ -48,7 +48,34 @@ SCENE_FNAME = 'scenes/default.scene'
 
 CHUNKSIZE = 9000
 
+HELPTEXT = '''usage: python tracer.py [options] [scene file]
+options:
+
+    -d            : run test (render with [lofi] settings)
+
+    -o or --no-bs : a shortcut for the --no-display, --no-shuffle, --no-graph options. Disables all gadgets to concentrate on performance. Useful for heavy renders.
+
+    --no-display  : do not open matplotlib preview window. This is a huge improvement in speed for large images.
+
+    --no-shuffle  : do not shuffle pixels before chunking. This, in practice, means that instead of being rendered as a gradually densening cloud, the image is raytraced progressively in linear chunks (though the order of the chunks themselves is still shuffled). The end result is identical, but with shuffling the preview window might give an idea of the render sooner. However, disabling shuffling provides a nice speed improvement for larger images, because: 1) copying rendered data to the large final image buffer is much faster if it's contiguous and 2) per chunk, the raytracer performs full calculations relative to an object (disc, horizon, etc) if and only if at least one ray of it its the object. So, if chunks are actually contiguous, there is a certain probability that some of them will never hit certain objects and many computations will be skipped. Shuffled chunks almost surely hit every object in the scene.
+
+    -jN           : use N processes (tip: use N = number of cores). Default is 4.
+
+    --no-graph    : By default Starless generates a matplotlib schematic graph, graph.png, of the sizes and position of the black hole, the accretion disc and the camera projected on the z-x plane (this is still a work in progress, and not complete). This option disables the generation of the graph.
+
+    -rXxY         : set resolution manually (overriding .scene file directives). Format resolution as -r640x480.
+
+    -cN           : set size of chunks in pixels (default: 9000). The only two settings you should try are -c2000 and -c9000. Smaller chunk size has more python overhead; but more chance of fitting in smaller and thus faster caches.
+
+    -h or --help  : display this text
+
+The (single) scene filename can be placed anywhere on the command string, and is recognized as such if it doesn't start with the - character. If omitted, scenes/default.scene is rendered.
+'''
+
 for arg in sys.argv[1:]:
+    if arg in ('-h', '--help'):
+        print(HELPTEXT)
+        exit()
     if arg == '-d':
         LOFI = True
         continue
@@ -278,9 +305,9 @@ if DRAWGRAPH:
     figure = plt.gcf()
 
     ax = plt.gca()
-    
+
     ax.cla()
-    
+
     gscale = 1.1*np.linalg.norm(CAMERA_POS)
     ax.set_xlim((-gscale,gscale))
     ax.set_ylim((-gscale,gscale))
@@ -290,8 +317,8 @@ if DRAWGRAPH:
 
 
     ax.plot([CAMERA_POS[2],LOOKAT[2]] , [CAMERA_POS[0],LOOKAT[0]] , color='0.05', linestyle='-')
-    
- 
+
+
     figure.gca().add_artist(g_diskout)
     figure.gca().add_artist(g_diskin)
     figure.gca().add_artist(g_horizon)
@@ -313,7 +340,7 @@ def rgbtosrgb(arr):
     arr[mask] **= 1/2.4
     arr[mask] *= 1.055
     arr[mask] -= 0.055
-    arr[-mask] *= 12.92
+    arr[~mask] *= 12.92
 
 
 # convert from srgb to linear rgb
@@ -323,7 +350,7 @@ def srgbtorgb(arr):
     arr[mask] += 0.055
     arr[mask] /= 1.055
     arr[mask] **= 2.4
-    arr[-mask] /= 12.92
+    arr[~mask] /= 12.92
 
 
 logger.debug("Loading textures...")
@@ -519,7 +546,7 @@ q,r = divmod(NCHUNKS, NTHREADS)
 indices = [q*i + min(i,r) for i in range(NTHREADS+1)]
 
 for i in range(NTHREADS):
-    schedules.append(chunks[ indices[i]:indices[i+1] ]) 
+    schedules.append(chunks[ indices[i]:indices[i+1] ])
 
 
 
@@ -607,7 +634,7 @@ def showprogress(messtring,i,queue):
         ETA = 0
 
     mes = "%d%%, %s remaining. Chunk %d/%d, %s"%(
-            int(100*progress), 
+            int(100*progress),
             format_time(ETA),
             chnkcounters[i],
             len(schedules[i]),
@@ -640,7 +667,7 @@ def raytrace_schedule(i,schedule,total_shared,q): # this is the function running
         #number of chunk pixels
         numChunk = chunk.shape[0]
 
-        #useful constant arrays 
+        #useful constant arrays
         ones = np.ones((numChunk))
         ones3 = np.ones((numChunk,3))
         UPFIELD = np.outer(ones,np.array([0.,1.,0.]))
@@ -719,7 +746,7 @@ def raytrace_schedule(i,schedule,total_shared,q): # this is the function running
                     k4 = RK4f( y +     rkstep*k3, h2)
 
                     increment = rkstep/6. * (k1 + 2*k2 + 2*k3 + k4)
-                    
+
                     velocity += increment[:,3:6]
 
                 point += increment[:,0:3]
@@ -753,7 +780,7 @@ def raytrace_schedule(i,schedule,total_shared,q): # this is the function running
                 diskmask = np.logical_and(mask_crossing,mask_distance)
 
                 if (diskmask.any()):
-                    
+
                     #actual collision point by intersection
                     lambdaa = - point[:,1]/velocity[:,1]
                     colpoint = point + lambdaa[:,np.newaxis] * velocity
@@ -776,7 +803,7 @@ def raytrace_schedule(i,schedule,total_shared,q): # this is the function running
                     elif DISK_TEXTURE_INT == DT_TEXTURE:
 
                         phi = np.arctan2(colpoint[:,0],point[:,2])
-                        
+
                         uv = np.zeros((numChunk,2))
 
                         uv[:,0] = ((phi+2*np.pi)%(2*np.pi))/(2*np.pi)
@@ -923,7 +950,7 @@ try:
     while True:
         refreshcounter+=1
         time.sleep(0.1)
-    
+
         output.parsemessages()
 
         if not DISABLE_DISPLAY and (refreshcounter%40 == 0):
@@ -963,11 +990,11 @@ total_colour_buffer_preproc *= GAIN
 if AIRY_BLOOM:
 
     logger.debug("-computing Airy disk bloom...")
-    
+
     #blending bloom
 
     #colour = total_colour_buffer_preproc + 0.3*blurd #0.2*dbg_grid + 0.8*dbg_finvec
-    
+
     #airy disk bloom
 
     colour_bloomd = np.copy(total_colour_buffer_preproc)
@@ -979,13 +1006,13 @@ if AIRY_BLOOM:
     radd = 0.00019825 * RESOLUTION[0] / np.arctan(TANFOV)
 
     # the user is allowed to rescale the resolution, though
-    radd*=AIRY_RADIUS 
+    radd*=AIRY_RADIUS
 
     # the pixel size of the kernel:
     # 25 pixels radius is ok for 5.0 bright source pixel at 1920x1080, so...
-    # remembering that airy ~ 1/x^3, so if we want intensity/x^3 < hreshold => 
+    # remembering that airy ~ 1/x^3, so if we want intensity/x^3 < hreshold =>
     # => max_x = (intensity/threshold)^1/3
-    # so it scales with 
+    # so it scales with
     # - the cube root of maximum intensity
     # - linear in resolution
 
@@ -994,9 +1021,9 @@ if AIRY_BLOOM:
     kern_radius = 25 * np.power( np.amax(colour_bloomd) / 5.0 , 1./3.) * RESOLUTION[0]/1920.
 
     logger.debug("--(radius: %3f, kernel pixel radius: %3f, maximum source brightness: %3f)", radd, kern_radius, mxint)
-    
+
     colour_bloomd = bloom.airy_convolve(colour_bloomd,radd)
- 
+
     colour_bloomd = colour_bloomd.reshape((numPixels,3))
 
 
@@ -1010,7 +1037,7 @@ else:
 if BLURDO:
 
     logger.debug("-computing wide gaussian blur...")
-    
+
     #hipass = np.outer(sqrnorm(total_colour_buffer_preproc) > BLOOMCUT, np.array([1.,1.,1.])) * total_colour_buffer_preproc
     blurd = np.copy(total_colour_buffer_preproc)
 
